@@ -6,14 +6,27 @@ import (
 	"io"
 )
 
+// Options configures how the document is parsed
+type Options struct {
+	// ConvertHeadingsToMarkdown converts Word heading styles to Markdown format
+	// (e.g., Heading 1 -> # Title, Heading 2 -> ## Title)
+	ConvertHeadingsToMarkdown bool
+}
+
 // Document represents a DOCX document
 type Document struct {
 	zipReader *zip.ReadCloser
 	content   string
+	options   Options
 }
 
-// Open opens a DOCX file and returns a Document
+// Open opens a DOCX file and returns a Document with default options
 func Open(filename string) (*Document, error) {
+	return OpenWithOptions(filename, Options{})
+}
+
+// OpenWithOptions opens a DOCX file with custom options
+func OpenWithOptions(filename string, opts Options) (*Document, error) {
 	r, err := zip.OpenReader(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open docx file: %w", err)
@@ -21,6 +34,7 @@ func Open(filename string) (*Document, error) {
 
 	doc := &Document{
 		zipReader: r,
+		options:   opts,
 	}
 
 	if err := doc.parse(); err != nil {
@@ -33,7 +47,12 @@ func Open(filename string) (*Document, error) {
 
 // ExtractText is a convenience function to extract text from a DOCX file
 func ExtractText(filename string) (string, error) {
-	doc, err := Open(filename)
+	return ExtractTextWithOptions(filename, Options{})
+}
+
+// ExtractTextWithOptions extracts text with custom options
+func ExtractTextWithOptions(filename string, opts Options) (string, error) {
+	doc, err := OpenWithOptions(filename, opts)
 	if err != nil {
 		return "", err
 	}
@@ -82,7 +101,7 @@ func (d *Document) parse() error {
 	}
 
 	// Parse the XML and extract text
-	text, err := parseDocumentXML(data)
+	text, err := parseDocumentXML(data, d.options)
 	if err != nil {
 		return fmt.Errorf("failed to parse document.xml: %w", err)
 	}

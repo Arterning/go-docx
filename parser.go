@@ -46,15 +46,17 @@ type wCell struct {
 }
 
 // parseDocumentXML parses the document.xml content and extracts text
-func parseDocumentXML(data []byte) (string, error) {
+func parseDocumentXML(data []byte, opts Options) (string, error) {
 	// Decode raw XML to process elements
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	var result strings.Builder
 	var inParagraph bool
 	var inTable bool
+	var inParagraphProperties bool
 	var currentTableRow []string
 	var tableRows [][]string
 	var paragraphText strings.Builder
+	var paragraphStyle string
 
 	for {
 		token, err := decoder.Token()
@@ -68,6 +70,20 @@ func parseDocumentXML(data []byte) (string, error) {
 			case "p":
 				inParagraph = true
 				paragraphText.Reset()
+				paragraphStyle = ""
+			case "pPr":
+				// Paragraph properties
+				inParagraphProperties = true
+			case "pStyle":
+				// Paragraph style - extract the value
+				if inParagraphProperties {
+					for _, attr := range elem.Attr {
+						if attr.Name.Local == "val" {
+							paragraphStyle = attr.Value
+							break
+						}
+					}
+				}
 			case "tbl":
 				inTable = true
 				tableRows = nil
@@ -89,13 +105,26 @@ func parseDocumentXML(data []byte) (string, error) {
 
 		case xml.EndElement:
 			switch elem.Name.Local {
+			case "pPr":
+				inParagraphProperties = false
+
 			case "p":
 				if inParagraph && !inTable {
 					// Regular paragraph - add text with double newline
 					text := strings.TrimSpace(paragraphText.String())
 					if text != "" {
-						result.WriteString(text)
-						result.WriteString("\n\n")
+						// Check if this is a heading and convert to markdown if needed
+						headingLevel := getHeadingLevel(paragraphStyle)
+						if headingLevel > 0 && opts.ConvertHeadingsToMarkdown {
+							// Add markdown heading prefix
+							result.WriteString(strings.Repeat("#", headingLevel))
+							result.WriteString(" ")
+							result.WriteString(text)
+							result.WriteString("\n\n")
+						} else {
+							result.WriteString(text)
+							result.WriteString("\n\n")
+						}
 					}
 				} else if inTable {
 					// Paragraph inside table cell
@@ -106,6 +135,7 @@ func parseDocumentXML(data []byte) (string, error) {
 				}
 				inParagraph = false
 				paragraphText.Reset()
+				paragraphStyle = ""
 
 			case "tr":
 				if inTable && len(currentTableRow) > 0 {
@@ -134,4 +164,33 @@ func parseDocumentXML(data []byte) (string, error) {
 
 	// Remove trailing newlines
 	return strings.TrimRight(result.String(), "\n"), nil
+}
+
+// getHeadingLevel returns the heading level (1-9) from a paragraph style, or 0 if not a heading
+func getHeadingLevel(style string) int {
+	if style == "" {
+		return 0
+	}
+
+	// Handle both "Heading1" and "1" style formats
+	style = strings.ToLower(style)
+
+	// Common Word heading styles
+	headingMap := map[string]int{
+		"heading1": 1, "heading 1": 1, "1": 1,
+		"heading2": 2, "heading 2": 2, "2": 2,
+		"heading3": 3, "heading 3": 3, "3": 3,
+		"heading4": 4, "heading 4": 4, "4": 4,
+		"heading5": 5, "heading 5": 5, "5": 5,
+		"heading6": 6, "heading 6": 6, "6": 6,
+		"heading7": 7, "heading 7": 7, "7": 7,
+		"heading8": 8, "heading 8": 8, "8": 8,
+		"heading9": 9, "heading 9": 9, "9": 9,
+	}
+
+	if level, ok := headingMap[style]; ok {
+		return level
+	}
+
+	return 0
 }
